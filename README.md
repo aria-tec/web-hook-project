@@ -310,10 +310,37 @@ cd sdk/typescript && npm test
 go test -v -count=1 -race ./tests/chaos/...
 ```
 
-### 5. Run k6 High-Throughput Load Benchmark
+### 5. Run Active Vulnerability & Edge-Case Hunter Suite
+Mini-Svix features an active adversarial hunting suite that continuously tests boundary conditions:
 ```bash
-k6 run tests/load/load_test.js
+# 1. Run Time-Bounded Go Native Fuzzers (HMAC & SSRF)
+go test -v -fuzz=FuzzVerifySignature -fuzztime=10s ./tests/
+go test -v -fuzz=FuzzIsRestrictedIP -fuzztime=10s ./tests/
+
+# 2. Run Adversarial Mock Receivers (Slowloris & Abrupt Drop)
+go test -v -race ./tests/ -run TestAdversarial
+
+# 3. Run Goroutine & Memory Leak Invariant Assertions
+go test -v -race ./tests/ -run "TestGoroutineLeak|TestHeapMemory"
 ```
+
+---
+
+## 🏛️ Stability Charter & Longevity ("The SQLite Standard")
+
+> **Formal Guarantee:**  
+> Mini-Svix is **feature-complete, architecturally frozen, and rigorously hardened**. We strictly guarantee **Zero-API-Breakage**. Future maintenance and contributions are dedicated exclusively to:
+> 1. **Upstream Compatibility:** Keeping dependencies (Go, PostgreSQL, Redis) free of bit-rot and security vulnerabilities.
+> 2. **Active Vulnerability Hunting:** Proactively uncovering edge-case races, memory leaks, and parser anomalies via automated fuzzing.
+> 3. **Performance Optimization:** Shaving microseconds from outbox relay and dispatcher pipelines without altering public interfaces.
+
+### 🛡️ Scheduled Maintenance Matrix
+The codebase is audited autonomously every Sunday at 00:00 UTC via [`.github/workflows/scheduled-maintenance.yml`](.github/workflows/scheduled-maintenance.yml):
+* **Strict Tier (Blocking Gate):** Go 1.24 stable, PostgreSQL 16/17, Redis 7/8, `govulncheck` (0 CVEs), race detector, active fuzzers, and `goleak` memory assertions.
+* **Advisory Tier (Experimental):** Go `tip`, Bun, and Deno runtimes (`continue-on-error: true`).
+
+### 🐛 Bug Reporting & Deterministic Reproducer Policy
+To maintain high reliability, every bug report submitted must include a **deterministic reproducer** (a minimal standalone `go test` or `docker-compose` snippet). See [`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ---
 
