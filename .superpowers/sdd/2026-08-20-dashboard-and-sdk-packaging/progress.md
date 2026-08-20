@@ -18,4 +18,5 @@
   - Task 4: complete (commits 9eb4542..1b58fd9, review clean)
 - [x] Task 5: Operational Dashboard Web SPA (`web/`)
   - Task 5: complete (commits 1b58fd9..b557ffb, review clean)
-- [ ] Task 6: 1-Command Demo Stack (`docker-compose.yml`) & Quickstart Verification
+- [x] Task 6: 1-Command Demo Stack (`docker-compose.yml`) & Quickstart Verification
+  - Task 6: complete (commits b557ffb..60205ac, review clean)
