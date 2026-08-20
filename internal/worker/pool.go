@@ -11,25 +11,32 @@ import (
 	"web-hook-project/internal/dispatcher"
 	"web-hook-project/internal/domain"
 	"web-hook-project/internal/queue"
+	"web-hook-project/internal/retry"
 	"web-hook-project/internal/storage"
 )
 
 // Default configurations for worker pool.
 const (
-	DefaultNumWorkers   = 10
-	DefaultStreamName   = "stream:events:pending"
-	DefaultGroupName    = "worker-group"
-	DefaultBatchSize    = 10
-	DefaultPollInterval = 100 * time.Millisecond
+	DefaultNumWorkers        = 10
+	DefaultStreamName        = "stream:events:pending"
+	DefaultGroupName         = "worker-group"
+	DefaultBatchSize         = 10
+	DefaultPollInterval      = 100 * time.Millisecond
+	DefaultMinIdleDuration   = 10 * time.Second
+	DefaultClaimInterval     = 5 * time.Second
+	DefaultMaxClaimAttempts  = 5
 )
 
 // Config configures the bounded worker pool.
 type Config struct {
-	NumWorkers   int
-	StreamName   string
-	GroupName    string
-	BatchSize    int64
-	PollInterval time.Duration
+	NumWorkers        int
+	StreamName        string
+	GroupName         string
+	BatchSize         int64
+	PollInterval      time.Duration
+	MinIdleDuration   time.Duration
+	ClaimInterval     time.Duration
+	MaxClaimAttempts  int
 }
 
 // WorkerPool manages a bounded set of worker goroutines consuming events from Redis Streams,
@@ -40,11 +47,13 @@ type WorkerPool struct {
 	repo       storage.Repository
 	dispatcher *dispatcher.Dispatcher
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started atomic.Bool
-	stopped atomic.Bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	started       atomic.Bool
+	stopped       atomic.Bool
+	claimMu       sync.Mutex
+	claimAttempts map[string]int
 }
 
 // NewWorkerPool constructs a new bounded WorkerPool with sensible defaults.
@@ -64,16 +73,26 @@ func NewWorkerPool(cfg Config, q queue.StreamQueue, repo storage.Repository, dis
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = DefaultPollInterval
 	}
+	if cfg.MinIdleDuration <= 0 {
+		cfg.MinIdleDuration = DefaultMinIdleDuration
+	}
+	if cfg.ClaimInterval <= 0 {
+		cfg.ClaimInterval = DefaultClaimInterval
+	}
+	if cfg.MaxClaimAttempts <= 0 {
+		cfg.MaxClaimAttempts = DefaultMaxClaimAttempts
+	}
 
 	return &WorkerPool{
-		cfg:        cfg,
-		queue:      q,
-		repo:       repo,
-		dispatcher: disp,
+		cfg:           cfg,
+		queue:         q,
+		repo:          repo,
+		dispatcher:    disp,
+		claimAttempts: make(map[string]int),
 	}
 }
 
-// Start creates the consumer group in the stream queue and launches the worker goroutines.
+// Start creates the consumer group in the stream queue and launches the worker goroutines and PEL reclaimer.
 func (p *WorkerPool) Start(ctx context.Context) error {
 	if !p.started.CompareAndSwap(false, true) {
 		return errors.New("worker pool is already started")
@@ -88,6 +107,10 @@ func (p *WorkerPool) Start(ctx context.Context) error {
 		p.wg.Add(1)
 		go p.workerLoop(p.ctx, i)
 	}
+
+	// Launch background PEL (Pending Entries List) recovery loop
+	p.wg.Add(1)
+	go p.pelRecoveryLoop(p.ctx)
 
 	return nil
 }
@@ -133,12 +156,98 @@ func (p *WorkerPool) workerLoop(ctx context.Context, workerID int) {
 	}
 }
 
+// pelRecoveryLoop periodically claims and recovers stuck/idle messages in Redis Streams PEL.
+func (p *WorkerPool) pelRecoveryLoop(ctx context.Context) {
+	defer p.wg.Done()
+
+	ticker := time.NewTicker(p.cfg.ClaimInterval)
+	defer ticker.Stop()
+
+	consumerName := "pel-auto-reclaimer"
+	startID := "0-0"
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+
+				claimed, nextStart, err := p.queue.AutoClaim(
+					ctx,
+					p.cfg.StreamName,
+					p.cfg.GroupName,
+					consumerName,
+					p.cfg.MinIdleDuration,
+					startID,
+					p.cfg.BatchSize,
+				)
+				if err != nil {
+					if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+						return
+					}
+					// Pause on transient error
+					break
+				}
+
+				if len(claimed) == 0 {
+					startID = "0-0"
+					break
+				}
+
+				for _, msg := range claimed {
+					if ctx.Err() != nil {
+						return
+					}
+
+					// Poison Pill Ceiling: Track claim counts per message ID
+					p.claimMu.Lock()
+					p.claimAttempts[msg.ID]++
+					count := p.claimAttempts[msg.ID]
+					p.claimMu.Unlock()
+
+					if count > p.cfg.MaxClaimAttempts {
+						// Exceeded max claims -> poison pill: route to DLQ and ACK to unblock queue
+						if p.repo != nil {
+							_ = p.repo.UpdateEventStatus(ctx, msg.EventID, domain.EventStatusDLQ)
+						}
+						_ = p.queue.AckEvent(ctx, p.cfg.StreamName, p.cfg.GroupName, msg.ID)
+						continue
+					}
+
+					p.processMessage(ctx, msg)
+					_ = p.queue.AckEvent(ctx, p.cfg.StreamName, p.cfg.GroupName, msg.ID)
+				}
+
+				startID = nextStart
+				if startID == "0-0" || startID == "" {
+					break
+				}
+			}
+		}
+	}
+}
+
 func (p *WorkerPool) processMessage(ctx context.Context, msg queue.QueueMessage) {
 	if msg.TenantID == "" {
 		return
 	}
 
-	// 1. Resolve registered target endpoints for tenant
+	// 1. Zombie Worker Fencing / Optimistic Status Guard:
+	// If the event was already delivered or routed to DLQ by another worker/claim, skip re-dispatching
+	if p.repo != nil {
+		latestEvt, err := p.repo.GetEvent(ctx, msg.EventID)
+		if err == nil && latestEvt != nil {
+			if latestEvt.Status == domain.EventStatusDelivered || latestEvt.Status == domain.EventStatusDLQ {
+				return
+			}
+		}
+	}
+
+	// 2. Resolve registered target endpoints for tenant
 	endpoints, err := p.repo.GetEndpointsByTenant(ctx, msg.TenantID)
 	if err != nil {
 		return
@@ -156,7 +265,7 @@ func (p *WorkerPool) processMessage(ctx context.Context, msg queue.QueueMessage)
 		return
 	}
 
-	// 2. Resolve event object
+	// 3. Resolve event object
 	event, err := p.repo.GetEvent(ctx, msg.EventID)
 	if err != nil || event == nil {
 		event = &domain.Event{
@@ -168,17 +277,37 @@ func (p *WorkerPool) processMessage(ctx context.Context, msg queue.QueueMessage)
 		}
 	}
 
-	// 3. Dispatch to all active endpoints
+	// 4. Dispatch to all active endpoints with exponential retry backoff
 	for _, ep := range activeEndpoints {
 		if ctx.Err() != nil {
 			return
 		}
 		endpointCopy := ep
-		_, _ = p.dispatcher.Dispatch(ctx, &endpointCopy, event, 1)
+		attemptNum := 1
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			attempt, _ := p.dispatcher.Dispatch(ctx, &endpointCopy, event, attemptNum)
+			if attempt == nil || attempt.Status != domain.DeliveryStatusRetrying {
+				break
+			}
+			attemptNum++
+			if attemptNum > p.dispatcher.Policy().MaxRetries {
+				break
+			}
+			backoff := retry.CalculateBackoff(attemptNum, p.dispatcher.Policy())
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+		}
 	}
 }
 
-// Stop signals all workers to stop and waits for them to drain cleanly.
+
+// Stop signals all workers and the PEL reclaimer to stop and waits for them to drain cleanly.
 func (p *WorkerPool) Stop() {
 	if !p.stopped.CompareAndSwap(false, true) {
 		return
@@ -190,3 +319,4 @@ func (p *WorkerPool) Stop() {
 
 	p.wg.Wait()
 }
+

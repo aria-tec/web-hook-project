@@ -1,0 +1,49 @@
+{
+  "timestamp": "2026-08-20T02:29:48.677929Z",
+  "engine_version": "Mini-Svix v1.0-chaos-hardened",
+  "total_scenarios": 4,
+  "passed_count": 4,
+  "overall_status": "PASSED (100% ZERO LOSS VERIFIED)",
+  "scenarios": [
+    {
+      "name": "Outbox Buffer Zero-Loss Recovery",
+      "total_ingested": 100,
+      "total_delivered": 100,
+      "total_dlq": 0,
+      "data_loss_count": 0,
+      "duration_ms": 30,
+      "passed": true,
+      "verification_note": "All events committed to outbox drained and delivered with 0 loss."
+    },
+    {
+      "name": "Worker Crash \u0026 PEL Auto-Claim",
+      "total_ingested": 20,
+      "total_delivered": 20,
+      "total_dlq": 0,
+      "data_loss_count": 0,
+      "duration_ms": 83,
+      "passed": true,
+      "verification_note": "Abandoned in-flight messages successfully reclaimed and dispatched."
+    },
+    {
+      "name": "Destination Chaos \u0026 DLQ Isolation",
+      "total_ingested": 2,
+      "total_delivered": 1,
+      "total_dlq": 1,
+      "data_loss_count": 0,
+      "duration_ms": 301,
+      "passed": true,
+      "verification_note": "Flaky events retried with jitter; non-retryable errors routed to DLQ."
+    },
+    {
+      "name": "Concurrent Idempotency Storm",
+      "total_ingested": 100,
+      "total_delivered": 10,
+      "total_dlq": 0,
+      "data_loss_count": 0,
+      "duration_ms": 31,
+      "passed": true,
+      "verification_note": "100 requests collapsed into exactly 10 unique events with zero duplicate deliveries."
+    }
+  ]
+}

@@ -108,7 +108,11 @@ func main() {
 
 	// 4. Real-time SSE Stream Broker & Safe HTTP Dispatcher
 	sseBroker := api.NewSSEBroker()
-	safeClient := dispatcher.NewSafeHTTPClient(10 * time.Second)
+	allowLocal := os.Getenv("ALLOW_LOCAL_DISPATCH") == "true" || os.Getenv("ENABLE_SSRF_PROTECTION") == "false"
+	if allowLocal {
+		log.Printf("[INFO] Local dispatch enabled (SSRF private network restriction disabled for demo/testing)")
+	}
+	safeClient := dispatcher.NewSafeHTTPClientWithAllowPrivate(10*time.Second, allowLocal)
 	backoffPolicy := retry.DefaultBackoffPolicy()
 	disp := dispatcher.NewDispatcher(safeClient, repo, backoffPolicy).
 		WithMetrics(metrics).

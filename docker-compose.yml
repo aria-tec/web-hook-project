@@ -16,6 +16,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 5s
+    networks:
+      - webhook_net
     restart: unless-stopped
 
   redis:
@@ -30,8 +33,83 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 3s
+    networks:
+      - webhook_net
+    restart: unless-stopped
+
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webhook_engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/webhook_db?sslmode=disable"
+      REDIS_URL: "redis://redis:6379"
+      PORT: "8080"
+      WORKER_COUNT: "20"
+      RELAY_BATCH_SIZE: "100"
+      ALLOW_LOCAL_DISPATCH: "true"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - webhook_net
+    restart: unless-stopped
+
+  mock-receiver:
+    build:
+      context: .
+      dockerfile: cmd/mockreceiver/Dockerfile
+    container_name: webhook_mockreceiver
+    environment:
+      PORT: "9090"
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 3s
+    networks:
+      - webhook_net
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: webhook_dashboard
+    depends_on:
+      engine:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - webhook_net
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  webhook_net:
+    driver: bridge

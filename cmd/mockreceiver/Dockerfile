@@ -18,8 +18,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -a -installsuffix cgo \
     -ldflags="-s -w -extldflags '-static'" \
-    -o /bin/webhook-engine \
-    ./cmd/server/main.go
+    -o /bin/mock-receiver \
+    ./cmd/mockreceiver/main.go
 
 # Stage 2: Minimal Alpine runtime image (< 20MB)
 FROM alpine:3.21
@@ -27,11 +27,11 @@ FROM alpine:3.21
 # Install TLS certificates and timezone data
 RUN apk add --no-cache ca-certificates tzdata
 
-COPY --from=builder /bin/webhook-engine /webhook-engine
+COPY --from=builder /bin/mock-receiver /mock-receiver
 
 # Run as unprivileged user
 USER 65534:65534
 
-EXPOSE 8080
+EXPOSE 9090
 
-ENTRYPOINT ["/webhook-engine"]
+ENTRYPOINT ["/mock-receiver"]

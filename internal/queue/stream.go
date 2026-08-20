@@ -34,6 +34,7 @@ type StreamQueue interface {
 	CreateConsumerGroup(ctx context.Context, streamName, groupName, startID string) error
 	ReadEvents(ctx context.Context, streamName, groupName, consumerName string, count int64, block time.Duration) ([]QueueMessage, error)
 	AckEvent(ctx context.Context, streamName, groupName string, messageIDs ...string) error
+	AutoClaim(ctx context.Context, streamName, groupName, consumerName string, minIdle time.Duration, startID string, count int64) (messages []QueueMessage, nextStartID string, err error)
 }
 
 // RedisStreamQueue is a Redis Streams backed implementation of StreamQueue.
@@ -155,6 +156,43 @@ func (r *RedisStreamQueue) AckEvent(ctx context.Context, streamName, groupName s
 	return nil
 }
 
+func (r *RedisStreamQueue) AutoClaim(ctx context.Context, streamName, groupName, consumerName string, minIdle time.Duration, startID string, count int64) ([]QueueMessage, string, error) {
+	if streamName == "" {
+		return nil, "", ErrEmptyStream
+	}
+	if groupName == "" {
+		return nil, "", ErrEmptyGroup
+	}
+	if startID == "" {
+		startID = "0-0"
+	}
+	if count <= 0 {
+		count = 10
+	}
+
+	res, nextStart, err := r.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+		Stream:   streamName,
+		Group:    groupName,
+		Consumer: consumerName,
+		MinIdle:  minIdle,
+		Start:    startID,
+		Count:    count,
+	}).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return []QueueMessage{}, "0-0", nil
+		}
+		return nil, "", fmt.Errorf("redis xautoclaim error: %w", err)
+	}
+
+	var messages []QueueMessage
+	for _, msg := range res {
+		messages = append(messages, parseRedisMessage(msg))
+	}
+
+	return messages, nextStart, nil
+}
+
 func parseRedisMessage(msg redis.XMessage) QueueMessage {
 	qm := QueueMessage{
 		ID: msg.ID,
@@ -188,10 +226,17 @@ func parseRedisMessage(msg redis.XMessage) QueueMessage {
 	return qm
 }
 
+// memPendingEntry stores message delivery time and active consumer in memory.
+type memPendingEntry struct {
+	msg          QueueMessage
+	deliveryTime time.Time
+	consumer     string
+}
+
 // memGroup tracks state for a consumer group within an in-memory stream.
 type memGroup struct {
 	lastDeliveredIdx int
-	pending          map[string]QueueMessage
+	pending          map[string]memPendingEntry
 }
 
 // memStream represents a single stream in memory.
@@ -305,7 +350,7 @@ func (m *MemoryStreamQueue) CreateConsumerGroup(ctx context.Context, streamName,
 
 	st.groups[groupName] = &memGroup{
 		lastDeliveredIdx: lastIdx,
-		pending:          make(map[string]QueueMessage),
+		pending:          make(map[string]memPendingEntry),
 	}
 
 	return nil
@@ -338,7 +383,7 @@ func (m *MemoryStreamQueue) ReadEvents(ctx context.Context, streamName, groupNam
 		if !exists {
 			grp = &memGroup{
 				lastDeliveredIdx: -1,
-				pending:          make(map[string]QueueMessage),
+				pending:          make(map[string]memPendingEntry),
 			}
 			st.groups[groupName] = grp
 		}
@@ -350,6 +395,7 @@ func (m *MemoryStreamQueue) ReadEvents(ctx context.Context, streamName, groupNam
 				end = len(st.messages)
 			}
 
+			now := time.Now()
 			result := make([]QueueMessage, 0, end-start)
 			for i := start; i < end; i++ {
 				msg := st.messages[i]
@@ -358,7 +404,11 @@ func (m *MemoryStreamQueue) ReadEvents(ctx context.Context, streamName, groupNam
 					copy(pCopy, msg.Payload)
 					msg.Payload = pCopy
 				}
-				grp.pending[msg.ID] = msg
+				grp.pending[msg.ID] = memPendingEntry{
+					msg:          msg,
+					deliveryTime: now,
+					consumer:     consumerName,
+				}
 				result = append(result, msg)
 			}
 			grp.lastDeliveredIdx = end - 1
@@ -425,3 +475,52 @@ func (m *MemoryStreamQueue) AckEvent(ctx context.Context, streamName, groupName 
 
 	return nil
 }
+
+func (m *MemoryStreamQueue) AutoClaim(ctx context.Context, streamName, groupName, consumerName string, minIdle time.Duration, startID string, count int64) ([]QueueMessage, string, error) {
+	if streamName == "" {
+		return nil, "", ErrEmptyStream
+	}
+	if groupName == "" {
+		return nil, "", ErrEmptyGroup
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	if count <= 0 {
+		count = 10
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	st, exists := m.streams[streamName]
+	if !exists {
+		return []QueueMessage{}, "0-0", nil
+	}
+
+	grp, exists := st.groups[groupName]
+	if !exists {
+		return []QueueMessage{}, "0-0", nil
+	}
+
+	now := time.Now()
+	var claimed []QueueMessage
+
+	for id, entry := range grp.pending {
+		if now.Sub(entry.deliveryTime) >= minIdle {
+			claimed = append(claimed, entry.msg)
+			// update entry
+			grp.pending[id] = memPendingEntry{
+				msg:          entry.msg,
+				deliveryTime: now,
+				consumer:     consumerName,
+			}
+			if int64(len(claimed)) >= count {
+				break
+			}
+		}
+	}
+
+	return claimed, "0-0", nil
+}
+

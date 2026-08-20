@@ -68,10 +68,18 @@ func IsRestrictedIP(ip net.IP) bool {
 
 // NewSafeHTTPClient returns an *http.Client configured with SSRF protection and high-throughput connection pooling.
 func NewSafeHTTPClient(timeout time.Duration) *http.Client {
+	return NewSafeHTTPClientWithAllowPrivate(timeout, false)
+}
+
+// NewSafeHTTPClientWithAllowPrivate returns an *http.Client configured with SSRF protection and optional allowance of private IP ranges (for local demo & test environments).
+func NewSafeHTTPClientWithAllowPrivate(timeout time.Duration, allowPrivate bool) *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   timeout,
 		KeepAlive: 30 * time.Second,
 		Control: func(network, address string, c syscall.RawConn) error {
+			if allowPrivate {
+				return nil
+			}
 			host, _, err := net.SplitHostPort(address)
 			if err != nil {
 				return err
@@ -93,10 +101,14 @@ func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 
 			// If host is an IP literal, validate immediately
 			if ip := net.ParseIP(host); ip != nil {
-				if IsRestrictedIP(ip) {
+				if !allowPrivate && IsRestrictedIP(ip) {
 					return nil, ErrRestrictedDestination
 				}
 				return dialer.DialContext(ctx, network, addr)
+			}
+
+			if allowPrivate {
+				return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
 			}
 
 			// Resolve host DNS and validate all returned IP addresses

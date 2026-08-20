@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -320,3 +321,61 @@ func TestRepository_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestRepository_DLQ_Lifecycle(t *testing.T) {
+	repo := storage.NewMemoryRepository()
+	ctx := context.Background()
+	tenantID := "tenant_dlq_test"
+
+	// Create 3 events: 2 DLQ, 1 DELIVERED
+	for i := 1; i <= 3; i++ {
+		status := domain.EventStatusDLQ
+		if i == 3 {
+			status = domain.EventStatusDelivered
+		}
+		evt := &domain.Event{
+			ID:        fmt.Sprintf("evt_dlq_%d", i),
+			TenantID:  tenantID,
+			EventType: "payment.failed",
+			Payload:   []byte(`{"amount":100}`),
+			Status:    status,
+			CreatedAt: time.Now().Add(time.Duration(i) * time.Minute),
+		}
+		ob := &domain.OutboxEvent{
+			EventID:   evt.ID,
+			Status:    domain.OutboxStatusPublished,
+			CreatedAt: time.Now(),
+		}
+		_ = repo.CreateEventWithOutbox(ctx, evt, ob)
+	}
+
+	// 1. Get DLQ events for tenant
+	dlqList, err := repo.GetDLQEvents(ctx, tenantID, 10, 0)
+	if err != nil {
+		t.Fatalf("GetDLQEvents() error: %v", err)
+	}
+	if len(dlqList) != 2 {
+		t.Fatalf("expected 2 DLQ events, got %d", len(dlqList))
+	}
+
+	// 2. Replay DLQ events
+	replayed, err := repo.ReplayDLQEvents(ctx, tenantID, []string{"evt_dlq_1", "evt_dlq_2", "evt_dlq_3"})
+	if err != nil {
+		t.Fatalf("ReplayDLQEvents() error: %v", err)
+	}
+	if replayed != 2 { // evt_dlq_3 was DELIVERED, not DLQ, so only 2 should be replayed
+		t.Fatalf("expected 2 events replayed, got %d", replayed)
+	}
+
+	// 3. Verify event status updated to PENDING and outbox created
+	evt1, _ := repo.GetEvent(ctx, "evt_dlq_1")
+	if evt1.Status != domain.EventStatusPending {
+		t.Fatalf("expected evt_dlq_1 status PENDING, got %v", evt1.Status)
+	}
+
+	pendingOutbox, err := repo.FetchAndLockPendingOutbox(ctx, 10)
+	if err != nil || len(pendingOutbox) != 2 {
+		t.Fatalf("expected 2 new pending outbox items after replay, got %d", len(pendingOutbox))
+	}
+}
+

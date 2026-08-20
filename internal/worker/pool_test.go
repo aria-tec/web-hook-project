@@ -293,3 +293,143 @@ func TestWorkerPool_HighConcurrencyRace(t *testing.T) {
 		t.Fatalf("expected %d deliveries, got %d", totalEvents, got)
 	}
 }
+
+func TestWorkerPool_PELAutoClaimRecovery(t *testing.T) {
+	var deliveryCount atomic.Int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deliveryCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"received":true}`))
+	}))
+	defer server.Close()
+
+	repo := storage.NewMemoryRepository()
+	q := queue.NewMemoryStreamQueue()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tenantID := "tenant_pel_test"
+	_ = repo.CreateTenant(ctx, &domain.Tenant{ID: tenantID, Name: "PEL Tenant"})
+	_ = repo.CreateEndpoint(ctx, &domain.Endpoint{
+		ID:        "ep_pel",
+		TenantID:  tenantID,
+		URL:       server.URL,
+		Secret:    "whsec_secret",
+		RateLimit: 100,
+		IsActive:  true,
+	})
+
+	streamName := "stream:pel:test"
+	groupName := "pel-group"
+
+	// 1. Create consumer group and publish event
+	_ = q.CreateConsumerGroup(ctx, streamName, groupName, "0")
+	event := &domain.Event{
+		ID:        "evt_pel_abandoned",
+		TenantID:  tenantID,
+		EventType: "pel.recovery",
+		Payload:   []byte(`{"recovered":true}`),
+		Status:    domain.EventStatusPending,
+		CreatedAt: time.Now(),
+	}
+	_ = repo.CreateEventWithOutbox(ctx, event, &domain.OutboxEvent{EventID: event.ID, Status: domain.OutboxStatusPending})
+	_, _ = q.PublishEvent(ctx, streamName, event)
+
+	// 2. Simulate a dead worker reading the event from Redis Stream, then dying (no ACK)
+	msgs, err := q.ReadEvents(ctx, streamName, groupName, "worker-crashed", 1, 0)
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("expected 1 message read by dead worker, got %v", msgs)
+	}
+
+	// 3. Start a WorkerPool configured with fast MinIdleDuration and ClaimInterval
+	disp := dispatcher.NewDispatcher(server.Client(), repo, retry.DefaultBackoffPolicy())
+	pool := worker.NewWorkerPool(worker.Config{
+		NumWorkers:      1,
+		StreamName:      streamName,
+		GroupName:       groupName,
+		MinIdleDuration: 50 * time.Millisecond,
+		ClaimInterval:   50 * time.Millisecond,
+	}, q, repo, disp)
+
+	_ = pool.Start(ctx)
+	defer pool.Stop()
+
+	// Wait for PEL reclaimer to pick up the idle message and deliver it
+	deadline := time.Now().Add(3 * time.Second)
+	for deliveryCount.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if got := deliveryCount.Load(); got != 1 {
+		t.Fatalf("expected PEL recovery to deliver exactly 1 event, got %d", got)
+	}
+
+	// Verify event updated to DELIVERED
+	updatedEvt, err := repo.GetEvent(ctx, event.ID)
+	if err != nil || updatedEvt.Status != domain.EventStatusDelivered {
+		t.Fatalf("expected event status DELIVERED, got %v", updatedEvt)
+	}
+}
+
+func TestWorkerPool_ZombieWorkerFencing(t *testing.T) {
+	var deliveryCount atomic.Int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deliveryCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	repo := storage.NewMemoryRepository()
+	q := queue.NewMemoryStreamQueue()
+	ctx := context.Background()
+
+	tenantID := "tenant_fencing"
+	_ = repo.CreateTenant(ctx, &domain.Tenant{ID: tenantID, Name: "Fencing Tenant"})
+	_ = repo.CreateEndpoint(ctx, &domain.Endpoint{
+		ID:        "ep_fence",
+		TenantID:  tenantID,
+		URL:       server.URL,
+		Secret:    "whsec_secret",
+		RateLimit: 100,
+		IsActive:  true,
+	})
+
+	// Pre-mark event as DELIVERED (as if already processed by another worker)
+	event := &domain.Event{
+		ID:        "evt_already_done",
+		TenantID:  tenantID,
+		EventType: "fencing.test",
+		Payload:   []byte(`{}`),
+		Status:    domain.EventStatusDelivered,
+		CreatedAt: time.Now(),
+	}
+	_ = repo.CreateEventWithOutbox(ctx, event, &domain.OutboxEvent{EventID: event.ID, Status: domain.OutboxStatusPublished})
+
+	disp := dispatcher.NewDispatcher(server.Client(), repo, retry.DefaultBackoffPolicy())
+	streamName := "stream:fencing"
+	groupName := "fencing-group"
+
+	pool := worker.NewWorkerPool(worker.Config{
+		NumWorkers:   1,
+		StreamName:   streamName,
+		GroupName:    groupName,
+		PollInterval: 10 * time.Millisecond,
+	}, q, repo, disp)
+
+	_ = pool.Start(ctx)
+	defer pool.Stop()
+
+	// Publish message to stream
+	_, _ = q.PublishEvent(ctx, streamName, event)
+
+	// Give worker time to read
+	time.Sleep(100 * time.Millisecond)
+
+	// Since event was already DELIVERED, zombie worker fencing should skip HTTP dispatch
+	if got := deliveryCount.Load(); got != 0 {
+		t.Fatalf("expected 0 deliveries due to fencing guard, got %d", got)
+	}
+}
+

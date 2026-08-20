@@ -268,3 +268,75 @@ func (m *MemoryRepository) GetEvent(ctx context.Context, id string) (*domain.Eve
 	}
 	return &eCopy, nil
 }
+
+func (m *MemoryRepository) GetDLQEvents(ctx context.Context, tenantID string, limit, offset int) ([]domain.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var dlqEvents []domain.Event
+	for _, evt := range m.events {
+		if evt.TenantID == tenantID && evt.Status == domain.EventStatusDLQ {
+			eCopy := *evt
+			if len(evt.Payload) > 0 {
+				eCopy.Payload = make([]byte, len(evt.Payload))
+				copy(eCopy.Payload, evt.Payload)
+			}
+			dlqEvents = append(dlqEvents, eCopy)
+		}
+	}
+
+	sort.Slice(dlqEvents, func(i, j int) bool {
+		return dlqEvents[i].CreatedAt.After(dlqEvents[j].CreatedAt)
+	})
+
+	if offset > 0 {
+		if offset >= len(dlqEvents) {
+			return []domain.Event{}, nil
+		}
+		dlqEvents = dlqEvents[offset:]
+	}
+
+	if limit > 0 && len(dlqEvents) > limit {
+		dlqEvents = dlqEvents[:limit]
+	}
+
+	return dlqEvents, nil
+}
+
+func (m *MemoryRepository) ReplayDLQEvents(ctx context.Context, tenantID string, eventIDs []string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	replayedCount := 0
+	now := time.Now()
+
+	for _, id := range eventIDs {
+		evt, exists := m.events[id]
+		if !exists || evt.TenantID != tenantID || evt.Status != domain.EventStatusDLQ {
+			continue
+		}
+
+		// Replay: mark event as PENDING and create a new PENDING outbox record
+		evt.Status = domain.EventStatusPending
+
+		m.nextOutboxID++
+		ob := &domain.OutboxEvent{
+			ID:         m.nextOutboxID,
+			EventID:    evt.ID,
+			Status:     domain.OutboxStatusPending,
+			RetryCount: 0,
+			CreatedAt:  now,
+		}
+		m.outboxEvents[ob.ID] = ob
+		replayedCount++
+	}
+
+	return replayedCount, nil
+}
+

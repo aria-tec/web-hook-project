@@ -2,12 +2,15 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"web-hook-project/internal/api"
 	"web-hook-project/internal/domain"
@@ -389,4 +392,79 @@ func TestHandler_MetricsEndpoint(t *testing.T) {
 		t.Fatalf("expected 200 from /metrics, got %d", rr.Code)
 	}
 }
+
+func TestHandler_DLQ_Endpoints(t *testing.T) {
+	router, repo, _ := setupTestEnvironment()
+	tenantID := "tenant_dlq_api_test"
+	ctx := context.Background()
+
+	// Seed 2 DLQ events
+	for i := 1; i <= 2; i++ {
+		evtID := fmt.Sprintf("evt_api_dlq_%d", i)
+		evt := &domain.Event{
+			ID:        evtID,
+			TenantID:  tenantID,
+			EventType: "payment.failed",
+			Payload:   []byte(`{"order_id":"ord_dlq"}`),
+			Status:    domain.EventStatusDLQ,
+			CreatedAt: time.Now(),
+		}
+		_ = repo.CreateEventWithOutbox(ctx, evt, &domain.OutboxEvent{EventID: evtID, Status: domain.OutboxStatusPublished})
+	}
+
+	// 1. GET /api/v1/dlq without tenant header -> 400
+	reqNoTenant, _ := http.NewRequest(http.MethodGet, "/api/v1/dlq", nil)
+	rrNoTenant := httptest.NewRecorder()
+	router.ServeHTTP(rrNoTenant, reqNoTenant)
+	if rrNoTenant.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when missing tenant header, got %d", rrNoTenant.Code)
+	}
+
+	// 2. GET /api/v1/dlq with tenant header -> 200
+	reqGet, _ := http.NewRequest(http.MethodGet, "/api/v1/dlq", nil)
+	reqGet.Header.Set("X-Tenant-ID", tenantID)
+	rrGet := httptest.NewRecorder()
+	router.ServeHTTP(rrGet, reqGet)
+
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("expected 200 for GET /api/v1/dlq, got %d, body: %s", rrGet.Code, rrGet.Body.String())
+	}
+
+	var dlqList []domain.Event
+	if err := json.Unmarshal(rrGet.Body.Bytes(), &dlqList); err != nil {
+		t.Fatalf("failed to decode dlq list: %v", err)
+	}
+	if len(dlqList) != 2 {
+		t.Fatalf("expected 2 dlq events, got %d", len(dlqList))
+	}
+
+	// 3. POST /api/v1/dlq/replay with empty event_ids -> 400
+	reqBadReplay, _ := http.NewRequest(http.MethodPost, "/api/v1/dlq/replay", bytes.NewBufferString(`{"event_ids":[]}`))
+	reqBadReplay.Header.Set("X-Tenant-ID", tenantID)
+	rrBadReplay := httptest.NewRecorder()
+	router.ServeHTTP(rrBadReplay, reqBadReplay)
+	if rrBadReplay.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty event_ids, got %d", rrBadReplay.Code)
+	}
+
+	// 4. POST /api/v1/dlq/replay with valid IDs -> 200
+	replayBody := `{"event_ids":["evt_api_dlq_1", "evt_api_dlq_2"]}`
+	reqReplay, _ := http.NewRequest(http.MethodPost, "/api/v1/dlq/replay", bytes.NewBufferString(replayBody))
+	reqReplay.Header.Set("X-Tenant-ID", tenantID)
+	rrReplay := httptest.NewRecorder()
+	router.ServeHTTP(rrReplay, reqReplay)
+
+	if rrReplay.Code != http.StatusOK {
+		t.Fatalf("expected 200 for replay, got %d, body: %s", rrReplay.Code, rrReplay.Body.String())
+	}
+
+	var replayResp map[string]interface{}
+	if err := json.Unmarshal(rrReplay.Body.Bytes(), &replayResp); err != nil {
+		t.Fatalf("failed to decode replay response: %v", err)
+	}
+	if replayResp["replayed_count"] != float64(2) {
+		t.Fatalf("expected replayed_count 2, got %v", replayResp["replayed_count"])
+	}
+}
+
 

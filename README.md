@@ -1,13 +1,36 @@
 # Distributed Event & Webhook Reliability Engine (Mini-Svix)
 
 [![Go Version](https://img.shields.io/badge/Go-1.24%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react)](https://react.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-v3-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?style=flat&logo=postgresql)](https://www.postgresql.org/)
 [![Redis Streams](https://img.shields.io/badge/Redis-Streams%207-DC382D?style=flat&logo=redis)](https://redis.io/)
-[![Docker](https://img.shields.io/badge/Docker-Multi--Stage%20%3C20MB-2496ED?style=flat&logo=docker)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/Docker-1--Command%20Stack-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passed%20(0%20Data%20Races)-brightgreen)](https://github.com/)
 [![Benchmark](https://img.shields.io/badge/k6%20SLA-P99%20%3C%201.72ms%20%40%202k%20RPS-success)](https://k6.io/)
 
-A high-performance, fault-tolerant, and cryptographically secure **Distributed Webhook Delivery & Event Reliability Engine** written from first principles in Go (Golang). Inspired by the core architectures of [Svix](https://www.svix.com/) and Stripe Events, this engine is engineered to handle mission-critical event distribution with guaranteed delivery, zero dual-write data loss, and sub-millisecond P90 latencies.
+A high-performance, fault-tolerant, and cryptographically secure **Distributed Webhook Delivery & Event Reliability Engine** written from first principles in Go (Golang). Inspired by the architectures of [Svix](https://www.svix.com/) and Stripe Events, this system features guaranteed transactional delivery, zero dual-write data loss, sub-millisecond P90 latencies, zero-dependency SDKs for Go & TypeScript, and an interactive real-time operational dashboard.
+
+---
+
+## ⚡ 1-Command Interactive Quickstart
+
+Spin up the entire ecosystem (PostgreSQL 16, Redis 7, Go Engine, Mock Webhook Receiver, and React Operational Dashboard) with a single command:
+
+```bash
+docker compose up --build
+```
+
+### Accessible Services:
+| Service | URL / Port | Description |
+|---|---|---|
+| **Operational Dashboard** | [http://localhost:3000](http://localhost:3000) | Dark Tech Glassmorphism SPA with live SSE delivery stream, HMAC inspector, simulation triggers, and DLQ recovery |
+| **Go Engine API** | [http://localhost:8080](http://localhost:8080) | Core Webhook Ingestion, Outbox Relay, and DLQ Replay Engine |
+| **Mock Webhook Receiver** | [http://localhost:9090](http://localhost:9090) | Programmable receiver (`/webhook/success`, `/webhook/flaky`, `/webhook/poison`) with inspection log |
+| **Prometheus Metrics** | [http://localhost:8080/metrics](http://localhost:8080/metrics) | Real-time delivery, outbox latency, and failure telemetry |
+| **PostgreSQL 16** | `localhost:5432` | ACID event storage & transactional outbox table |
+| **Redis 7 Streams** | `localhost:6379` | High-throughput stream consumer group & idempotency guard |
 
 ---
 
@@ -57,14 +80,14 @@ A high-performance, fault-tolerant, and cryptographically secure **Distributed W
                 │  • HMAC-SHA256 Payload Signature      │
                 │  • Full Jitter Exponential Backoff    │
                 │  • Dead Letter Queue (DLQ) Routing    │
-                └───────────────────┬───────────────────┘
-                                    │
-                                    ▼
-                ┌───────────────────────────────────────┐
-                │     Prometheus Telemetry Registry     │
-                │  • /metrics exposition endpoint       │
-                │  • Ingested, Delivered, Latency, DLQ  │
-                └───────────────────────────────────────┘
+                └─────────────┬───────────────────┬─────┘
+                              │                   │
+                              ▼                   ▼
+    ┌───────────────────────────────┐   ┌───────────────────────────────┐
+    │     Real-Time SSE Stream      │   │ Prometheus Telemetry Registry │
+    │  • GET /api/v1/events/stream  │   │  • /metrics exposition        │
+    │  • 200-Event Ring Buffer SPA  │   │  • P90/P99 latency histograms │
+    └───────────────────────────────┘   └───────────────────────────────┘
 ```
 
 ---
@@ -98,170 +121,179 @@ Calculates retry delays using randomized full jitter:
 $$T_{\text{cap}} = \min(T_{\max}, T_{\text{initial}} \times M^{(\text{attempt}-1)})$$
 $$T = \text{random}(0, T_{\text{cap}})$$
 - **Retryable:** HTTP `408`, `429`, all `5xx` server errors, network dropouts, and timeouts.
-- **Non-retryable:** HTTP `4xx` client errors (e.g. `400 Bad Request`, `401 Unauthorized`) route immediately to the **Dead Letter Queue (DLQ)** without wasting compute cycles.
-- Exhausted retries (max attempts reached) automatically mark the event status as `DLQ`.
-
-### 6. Prometheus Telemetry & Observability
-Exposes real-time Prometheus metrics on `/metrics`:
-- `events_ingested_total{tenant_id, event_type}`: Ingestion rate.
-- `events_delivered_total{tenant_id, endpoint_id, status_code}`: Successful deliveries.
-- `delivery_duration_seconds{tenant_id, endpoint_id}`: End-to-end latency histogram with 11 standardized SLA buckets.
-- `dlq_events_total{tenant_id, endpoint_id, reason}`: Dead letter queue occurrences.
+- **Non-Retryable:** HTTP `400`, `401`, `403`, `404`, `422` route immediately to Dead Letter Queue (DLQ).
+- **DLQ Replay:** 1-Click individual and batch re-queueing with fresh timestamp re-signing.
 
 ---
 
-## 📊 Performance & Load Benchmark (k6 Verified)
+## 🖥️ Operational Web Dashboard (`web/`)
 
-Tested with **k6** simulating a sustained high-throughput workload (90% unique ingestion, 10% replayed idempotency):
+The system includes a production-ready Single Page Application (SPA) built with **React 18**, **TypeScript**, **Tailwind CSS**, and **Lucide Icons** adopting a **Dark Tech Glassmorphism** design system.
 
-| Benchmark Metric | SLA Threshold Target | Actual Verified Result | Status |
-|---|---|---|---|
-| **Total Ingested Requests** | 90,000 req | **95,987 requests** | ✅ Passed |
-| **Error Rate (`http_req_failed`)** | $< 0.01\%$ | **0.00% (0 errors)** | ✅ Passed |
-| **Validation Checks** | $100\%$ | **100.00% (191,974 / 191,974)** | ✅ Passed |
-| **p50 Latency (Median)** | $< 10\text{ms}$ | **`269 µs` (0.26 ms)** | ⚡ Sub-millisecond |
-| **p90 Latency** | $< 20\text{ms}$ | **`526 µs` (0.52 ms)** | ⚡ Sub-millisecond |
-| **p95 Latency** | $< 30\text{ms}$ | **`726 µs` (0.72 ms)** | ⚡ Sub-millisecond |
-| **p99 Latency** | $< 40\text{ms}$ | **`1.72 ms`** | 🚀 **23x faster than SLA** |
+### Dashboard Highlights:
+1. **Live Delivery Stream:** Real-time event stream via Server-Sent Events (SSE) backed by a 200-event circular ring buffer in React state to ensure zero UI lag under heavy burst traffic.
+2. **Interactive Simulation Bar:** 1-Click demo triggers:
+   - 🟢 **Normal (200 OK):** Fast successful delivery.
+   - 🟡 **Flaky (500 Retry $\rightarrow$ 200 OK):** Automatic exponential retry and backoff recovery.
+   - 🔴 **Poison Pill (400 DLQ):** Non-retryable error routed directly to Dead Letter Queue.
+   - ⚡ **Burst (5 Events):** Concurrent high-throughput pipeline demonstration.
+3. **Deep HMAC & Payload Inspector:** Modal drawer displaying raw JSON payload, `X-Webhook-Signature` breakdown (`t=<timestamp>,v1=<hex>`), canonical signed bytes, secret preview, and verification status.
+4. **Dead-Letter Queue (DLQ) Manager:** Real-time DLQ table with payload preview, multi-select checkboxes, and 1-click batch replay.
+5. **Developer SDK Guide:** Tabbed syntax-highlighted snippets for TypeScript, Go, and cURL.
 
 ---
 
-## 📁 Repository Structure
+## 📦 Developer SDKs (Zero External Dependencies)
 
+### 1. TypeScript / Node.js SDK (`@minisvix/client`)
+
+Located in `sdk/typescript/`. Built with **Zero Runtime Dependencies** using native `fetch` and the Web Crypto API (`crypto.subtle`) for cross-runtime compatibility (Node.js, Bun, Deno, Cloudflare Workers, Next.js Edge).
+
+#### Installation
+```bash
+npm install @minisvix/client
 ```
-.
-├── cmd/
-│   └── server/
-│       └── main.go                 # Production entrypoint & graceful shutdown
-├── internal/
-│   ├── api/
-│   │   ├── handler.go              # REST Handlers (/events, /endpoints, /healthz)
-│   │   ├── handler_test.go         # API table-driven & idempotency tests
-│   │   └── router.go               # HTTP routing with /metrics mounting
-│   ├── dispatcher/
-│   │   ├── client.go               # Dispatcher engine executing deliveries
-│   │   ├── client_test.go          # Dispatcher delivery & retry tests
-│   │   ├── hmac.go                 # HMAC-SHA256 generator & verifier
-│   │   ├── hmac_test.go            # Timing-attack safe crypto tests
-│   │   ├── ssrf.go                 # SSRF egress filter & safe HTTP client
-│   │   └── ssrf_test.go            # 21 CIDR IP blocking tests
-│   ├── domain/
-│   │   ├── attempt.go              # DeliveryAttempt entity model
-│   │   ├── endpoint.go             # Webhook Endpoint model & validation
-│   │   ├── event.go                # Ingested Event model & validation
-│   │   ├── outbox.go               # Outbox record entity
-│   │   └── tenant.go               # Tenant entity model
-│   ├── idempotency/
-│   │   ├── guard.go                # Redis Lua distributed lock & cache
-│   │   └── guard_test.go           # Concurrency & conflict tests
-│   ├── outbox/
-│   │   ├── relay.go                # Outbox relay daemon loop
-│   │   └── relay_test.go           # Relay polling & error handling tests
-│   ├── queue/
-│   │   ├── stream.go               # Redis Streams abstraction & memory queue
-│   │   └── stream_test.go          # Blocking read & consumer group tests
-│   ├── retry/
-│   │   ├── scheduler.go            # Full Jitter backoff & retry/DLQ classifier
-│   │   └── scheduler_test.go       # Backoff curve & status classification tests
-│   ├── storage/
-│   │   ├── memory.go               # In-memory mock storage repository
-│   │   ├── postgres.go             # PostgreSQL pgxpool storage repository
-│   │   ├── repository.go           # Repository interface & domain errors
-│   │   └── repository_test.go      # Storage CRUD & atomic outbox tests
-│   └── telemetry/
-│       ├── metrics.go              # Prometheus metric vectors & HTTP handler
-│       └── metrics_test.go         # Metrics registration & collection tests
-├── migrations/
-│   ├── 000001_init_schema.up.sql   # Relational schema with index optimizations
-│   └── 000001_init_schema.down.sql # Rollback migration
-├── tests/
-│   └── load/
-│       └── load_test.js            # k6 2,000 RPS sustained load benchmark
-├── Dockerfile                      # Multi-stage scratch build (< 20MB)
-├── docker-compose.yml              # Local PostgreSQL 16 + Redis 7 stack
-├── go.mod                          # Go module definitions
-└── go.sum
+
+#### Publisher (Producer)
+```typescript
+import { WebhookClient } from "@minisvix/client";
+
+const client = new WebhookClient({
+  baseUrl: "http://localhost:8080",
+  tenantId: "tenant_alpha",
+});
+
+// Ingest event with transactional outbox guarantee & idempotency
+const event = await client.publish(
+  "order.created",
+  { orderId: "ord_98765", amount: 15000, currency: "USD" },
+  { idempotencyKey: "idemp_order_98765_v1" }
+);
+
+console.log("Event ID:", event.id);
+```
+
+#### Consumer HMAC Signature Verification
+```typescript
+import { WebhookSignature } from "@minisvix/client";
+
+// Constant-time HMAC-SHA256 signature verification with replay tolerance
+const isValid = await WebhookSignature.verify(
+  "whsec_super_secret_signing_key_123",
+  req.headers["x-webhook-signature"],
+  rawBodyBuffer,
+  300 // 5-minute freshness tolerance
+);
+
+if (!isValid) {
+  return res.status(401).send("Invalid signature");
+}
 ```
 
 ---
 
-## 🚀 Getting Started
+### 2. Go SDK (`sdk/go/webhookclient`)
 
-### Prerequisites
-- [Go 1.24+](https://go.dev/dl/)
-- [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
-- [k6](https://k6.io/) (optional, for running load tests)
+Located in `sdk/go/webhookclient`. Built with **100% Go Standard Library** (`net/http`, `crypto/hmac`, `crypto/subtle`, `encoding/json`).
 
-### 1. Start Infrastructure (PostgreSQL & Redis)
-```bash
-docker compose up -d
+#### Publisher (Producer)
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"web-hook-project/sdk/go/webhookclient"
+)
+
+func main() {
+	client := webhookclient.New(
+		"http://localhost:8080",
+		"tenant_alpha",
+		webhookclient.WithTimeout(5*time.Second),
+	)
+
+	payload := map[string]interface{}{
+		"order_id": "ord_98765",
+		"amount":   15000,
+	}
+
+	event, err := client.Publish(
+		context.Background(),
+		"order.created",
+		payload,
+		webhookclient.WithIdempotencyKey("idemp_order_98765_v1"),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Event ID: %s, Status: %s\n", event.ID, event.Status)
+}
 ```
 
-### 2. Run the Engine Server
-```bash
-export DATABASE_URL="postgres://postgres:postgres@localhost:5432/webhook_db?sslmode=disable"
-export REDIS_URL="redis://localhost:6379"
-export PORT="8080"
-export WORKER_COUNT="20"
+#### Consumer HMAC Signature Verification
+```go
+package main
 
-go run ./cmd/server/main.go
-```
-*(Note: If PostgreSQL or Redis are not reachable, the engine automatically falls back to thread-safe in-memory stores for isolated local development.)*
+import (
+	"net/http"
+	"web-hook-project/sdk/go/webhookclient"
+)
 
-### 3. Register a Webhook Target Endpoint
-```bash
-curl -X POST http://localhost:8080/api/v1/endpoints \
-  -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: tenant_demo" \
-  -d '{
-    "url": "https://webhook.site/YOUR-UUID",
-    "secret": "whsec_super_secret_signing_key_123",
-    "rate_limit": 100
-  }'
-```
+func WebhookHandler(w http.ResponseWriter, r *http.Request) {
+	secret := "whsec_super_secret_signing_key_123"
+	sigHeader := r.Header.Get("X-Webhook-Signature")
+	payload, _ := io.ReadAll(r.Body)
 
-### 4. Ingest an Event (with Idempotency Key)
-```bash
-curl -X POST http://localhost:8080/api/v1/events \
-  -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: tenant_demo" \
-  -H "X-Idempotency-Key: idemp_order_99812" \
-  -d '{
-    "event_type": "order.payment_succeeded",
-    "payload": {
-      "order_id": "ord_99812",
-      "amount": 45000,
-      "currency": "USD"
-    }
-  }'
-```
+	if !webhookclient.VerifySignature(secret, sigHeader, payload, 300) {
+		http.Error(w, "Unauthorized signature", http.StatusUnauthorized)
+		return
+	}
 
-### 5. Inspect Prometheus Metrics
-```bash
-curl http://localhost:8080/metrics
+	w.WriteHeader(http.StatusOK)
+}
 ```
 
 ---
 
-## 🧪 Testing & Quality Assurance
+## 🧪 Automated Testing & Verification
 
-### Run Unit & Concurrency Tests (Zero Data Races)
+### 1. End-to-End Quickstart Verification Script
+Automates the full validation flow against all services:
+```bash
+./tests/e2e/quickstart_test.sh
+```
+**Checks Performed:**
+- ✓ 5 Services Health Probing (`/healthz` across Engine, Receiver, Dashboard, DB, Redis)
+- ✓ Prometheus Telemetry Metrics (`/metrics`)
+- ✓ Multi-Tenant Webhook Endpoint Provisioning
+- ✓ Atomic Outbox Ingestion & Idempotency Key Guard
+- ✓ Cryptographic HMAC-SHA256 Webhook Payload Signatures
+- ✓ Flaky 500 Simulation & Exponential Full-Jitter Retries
+- ✓ 400 Poison Pill Immediate Dead Letter Queue (DLQ) Routing
+- ✓ Batch DLQ Replay Pipeline
+
+### 2. Run All Go Unit, Integration, and Race Tests
 ```bash
 go test -count=1 -race -v ./...
 ```
 
-### Run k6 Load Benchmark
+### 3. Run TypeScript SDK Test Suite
 ```bash
-k6 run tests/load/load_test.js
+cd sdk/typescript && npm test
 ```
 
----
-
-## 🐳 Containerization
-
-Build a lightweight, production-ready static binary in a scratch Docker container (< 20MB):
+### 4. Run Chaos Failure Injection Tests
 ```bash
-docker build -t webhook-engine:latest .
+go test -v -count=1 -race ./tests/chaos/...
+```
+
+### 5. Run k6 High-Throughput Load Benchmark
+```bash
+k6 run tests/load/load_test.js
 ```
 
 ---

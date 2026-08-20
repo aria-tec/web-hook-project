@@ -25,4 +25,7 @@ type Repository interface {
 	RecordDeliveryAttempt(ctx context.Context, attempt *domain.DeliveryAttempt) error
 	UpdateEventStatus(ctx context.Context, eventID string, status domain.EventStatus) error
 	GetEvent(ctx context.Context, id string) (*domain.Event, error)
+	GetDLQEvents(ctx context.Context, tenantID string, limit, offset int) ([]domain.Event, error)
+	ReplayDLQEvents(ctx context.Context, tenantID string, eventIDs []string) (int, error)
 }
+

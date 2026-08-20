@@ -361,3 +361,76 @@ func TestMemoryStreamQueue_InvalidInputs(t *testing.T) {
 		t.Fatal("expected error with empty group name")
 	}
 }
+
+func TestMemoryStreamQueue_AutoClaim(t *testing.T) {
+	q := queue.NewMemoryStreamQueue()
+	ctx := context.Background()
+	stream := "stream:autoclaim_test"
+	group := "workers"
+
+	_ = q.CreateConsumerGroup(ctx, stream, group, "0")
+
+	// Publish 2 events
+	for i := 1; i <= 2; i++ {
+		evt := &domain.Event{
+			ID:        fmt.Sprintf("evt_claim_%d", i),
+			TenantID:  "tenant_1",
+			EventType: "test.claim",
+			Payload:   []byte(`{"test":true}`),
+			CreatedAt: time.Now(),
+		}
+		_, err := q.PublishEvent(ctx, stream, evt)
+		if err != nil {
+			t.Fatalf("publish error: %v", err)
+		}
+	}
+
+	// Read by consumer_dead
+	msgs, err := q.ReadEvents(ctx, stream, group, "consumer_dead", 2, 0)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("expected 2 messages read, got %d, err: %v", len(msgs), err)
+	}
+
+	// AutoClaim immediately with 100ms minIdle -> should return 0 (not idle yet)
+	claimed, _, err := q.AutoClaim(ctx, stream, group, "consumer_alive", 100*time.Millisecond, "0-0", 10)
+	if err != nil {
+		t.Fatalf("autoclaim error: %v", err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("expected 0 claimed messages before minIdle, got %d", len(claimed))
+	}
+
+	// Wait 120ms
+	time.Sleep(120 * time.Millisecond)
+
+	// AutoClaim now -> should return both messages
+	claimed, _, err = q.AutoClaim(ctx, stream, group, "consumer_alive", 100*time.Millisecond, "0-0", 10)
+	if err != nil {
+		t.Fatalf("autoclaim error after minIdle: %v", err)
+	}
+	if len(claimed) != 2 {
+		t.Fatalf("expected 2 claimed messages after minIdle, got %d", len(claimed))
+	}
+	if claimed[0].EventID != "evt_claim_1" && claimed[1].EventID != "evt_claim_1" {
+		t.Fatalf("missing evt_claim_1 in claimed messages: %v", claimed)
+	}
+
+	// Acking one message
+	err = q.AckEvent(ctx, stream, group, claimed[0].ID)
+	if err != nil {
+		t.Fatalf("ack error: %v", err)
+	}
+
+	// Wait 120ms again
+	time.Sleep(120 * time.Millisecond)
+
+	// AutoClaim now -> should only claim the 1 unacked message
+	claimed2, _, err := q.AutoClaim(ctx, stream, group, "consumer_alive", 100*time.Millisecond, "0-0", 10)
+	if err != nil {
+		t.Fatalf("autoclaim error: %v", err)
+	}
+	if len(claimed2) != 1 {
+		t.Fatalf("expected 1 claimed message after ack, got %d", len(claimed2))
+	}
+}
+

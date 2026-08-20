@@ -354,3 +354,107 @@ func (r *PostgresRepository) GetEvent(ctx context.Context, id string) (*domain.E
 	evt.Status = domain.EventStatus(statusStr)
 	return &evt, nil
 }
+
+func (r *PostgresRepository) GetDLQEvents(ctx context.Context, tenantID string, limit, offset int) ([]domain.Event, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	query := `
+		SELECT id, tenant_id, event_type, idempotency_key, payload, status, created_at
+		FROM events
+		WHERE tenant_id = $1 AND status = 'DLQ'
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := r.db.QueryContext(ctx, query, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []domain.Event
+	for rows.Next() {
+		var evt domain.Event
+		var idempKey sql.NullString
+		var statusStr string
+
+		if err := rows.Scan(
+			&evt.ID,
+			&evt.TenantID,
+			&evt.EventType,
+			&idempKey,
+			&evt.Payload,
+			&statusStr,
+			&evt.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if idempKey.Valid {
+			evt.IdempotencyKey = idempKey.String
+		}
+		evt.Status = domain.EventStatus(statusStr)
+		events = append(events, evt)
+	}
+
+	return events, rows.Err()
+}
+
+func (r *PostgresRepository) ReplayDLQEvents(ctx context.Context, tenantID string, eventIDs []string) (int, error) {
+	if len(eventIDs) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	replayedCount := 0
+	now := time.Now()
+
+	for _, eventID := range eventIDs {
+		// Update status to PENDING only if event is currently DLQ
+		updateQuery := `
+			UPDATE events
+			SET status = 'PENDING'
+			WHERE id = $1 AND tenant_id = $2 AND status = 'DLQ'
+		`
+		res, err := tx.ExecContext(ctx, updateQuery, eventID, tenantID)
+		if err != nil {
+			return 0, err
+		}
+
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+
+		if rowsAffected > 0 {
+			outboxQuery := `
+				INSERT INTO outbox_events (event_id, status, retry_count, created_at)
+				VALUES ($1, 'PENDING', 0, $2)
+			`
+			_, err = tx.ExecContext(ctx, outboxQuery, eventID, now)
+			if err != nil {
+				return 0, err
+			}
+			replayedCount++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return replayedCount, nil
+}
+

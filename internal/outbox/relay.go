@@ -99,28 +99,53 @@ func (r *Relay) Start(ctx context.Context, pollInterval time.Duration, batchSize
 		batchSize = 100
 	}
 
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
+	consecutiveErrors := 0
 
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return ctx.Err()
-		case <-ticker.C:
-			for {
-				count, err := r.ProcessNextBatch(ctx, batchSize)
-				if err != nil {
-					// Stop draining loop on error and wait for next tick
-					break
-				}
-				// If fewer items than batchSize were processed, the pending queue is drained
-				if count < batchSize {
-					break
-				}
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
+		}
+
+		if consecutiveErrors > 0 {
+			// Progressive backoff with jitter on broker/db outages
+			shift := consecutiveErrors
+			if shift > 6 {
+				shift = 6
+			}
+			backoff := time.Duration(1<<shift) * 50 * time.Millisecond
+			if backoff > 3*time.Second {
+				backoff = 3 * time.Second
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(pollInterval):
+			}
+		}
+
+		for {
+			count, err := r.ProcessNextBatch(ctx, batchSize)
+			if err != nil {
+				consecutiveErrors++
+				break
+			}
+
+			consecutiveErrors = 0
+			// If fewer items than batchSize were processed, the pending queue is drained
+			if count < batchSize {
+				break
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 		}
 	}
 }
+
