@@ -39,6 +39,9 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
       setIsProvisioning(true);
       const secret = 'whsec_demo_operational_secret_999';
       const endpoints = [
+        { url: 'http://mock-receiver:9090/webhook/success', secret, rate_limit: 100 },
+        { url: 'http://mock-receiver:9090/webhook/flaky', secret, rate_limit: 50 },
+        { url: 'http://mock-receiver:9090/webhook/poison', secret, rate_limit: 50 },
         { url: 'http://localhost:9090/webhook/success', secret, rate_limit: 100 },
         { url: 'http://localhost:9090/webhook/flaky', secret, rate_limit: 50 },
         { url: 'http://localhost:9090/webhook/poison', secret, rate_limit: 50 },
@@ -55,7 +58,7 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
         });
       }
       setEndpointsProvisioned(true);
-      showToast('success', `Provisioned 3 mock receiver endpoints for ${tenantId}`);
+      showToast('success', `Provisioned mock receiver endpoints for ${tenantId}`);
     } catch (err: any) {
       showToast('error', `Provisioning failed: ${err.message}`);
     } finally {

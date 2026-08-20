@@ -97,6 +97,10 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// Disable write deadline for long-lived SSE streaming
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	clientChan := make(chan *domain.DeliveryAttempt, DefaultClientBufferSize)
 	b.RegisterClient(clientChan)
 	defer b.UnregisterClient(clientChan)

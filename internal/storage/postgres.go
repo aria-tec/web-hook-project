@@ -61,6 +61,16 @@ func (r *PostgresRepository) CreateEndpoint(ctx context.Context, endpoint *domai
 		updatedAt = now
 	}
 
+	// Auto-provision tenant if it does not already exist
+	tenantQuery := `
+		INSERT INTO tenants (id, name, created_at)
+		VALUES ($1, $1, $2)
+		ON CONFLICT (id) DO NOTHING
+	`
+	if _, err := r.db.ExecContext(ctx, tenantQuery, endpoint.TenantID, createdAt); err != nil {
+		return err
+	}
+
 	query := `
 		INSERT INTO endpoints (id, tenant_id, url, secret, rate_limit, is_active, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -155,6 +165,16 @@ func (r *PostgresRepository) CreateEventWithOutbox(ctx context.Context, event *d
 	var idempKey *string
 	if event.IdempotencyKey != "" {
 		idempKey = &event.IdempotencyKey
+	}
+
+	// Auto-provision tenant if it does not already exist
+	tenantQuery := `
+		INSERT INTO tenants (id, name, created_at)
+		VALUES ($1, $1, $2)
+		ON CONFLICT (id) DO NOTHING
+	`
+	if _, err = tx.ExecContext(ctx, tenantQuery, event.TenantID, event.CreatedAt); err != nil {
+		return err
 	}
 
 	eventQuery := `

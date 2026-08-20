@@ -54,3 +54,12 @@ CREATE TABLE IF NOT EXISTS delivery_attempts (
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status, id) WHERE status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_events_tenant_created ON events(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_attempts_event ON delivery_attempts(event_id);
+
+-- Seed default demo tenants
+INSERT INTO tenants (id, name) VALUES 
+    ('tenant_alpha', 'Tenant Alpha'),
+    ('tenant_beta', 'Tenant Beta'),
+    ('tenant_prod', 'Tenant Production'),
+    ('tenant_demo', 'Tenant Demo')
+ON CONFLICT (id) DO NOTHING;
+
