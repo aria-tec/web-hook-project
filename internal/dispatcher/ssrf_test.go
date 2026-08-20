@@ -50,6 +50,12 @@ func TestSSRF_IsRestrictedIP(t *testing.T) {
 
 		// IPv6 Multicast
 		{"ff02::1", "IPv6 multicast"},
+
+		// IPv4-mapped IPv6
+		{"::ffff:127.0.0.1", "IPv4-mapped IPv6 loopback"},
+		{"::ffff:169.254.169.254", "IPv4-mapped IPv6 cloud metadata"},
+		{"::ffff:10.0.0.1", "IPv4-mapped IPv6 RFC1918"},
+		{"::ffff:192.168.1.1", "IPv4-mapped IPv6 RFC1918"},
 	}
 
 	for _, tc := range blockedIPs {

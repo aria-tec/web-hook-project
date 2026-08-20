@@ -55,7 +55,11 @@ func IsRestrictedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+	// Normalize IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1 -> 127.0.0.1)
+	if ipv4 := ip.To4(); ipv4 != nil {
+		ip = ipv4
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
 		return true
 	}
 	for _, block := range privateIPBlocks {

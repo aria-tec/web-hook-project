@@ -67,3 +67,17 @@ func VerifySignature(secret string, header string, payload []byte, toleranceSeco
 
 	return hmac.Equal([]byte(actualSig), []byte(expectedSig))
 }
+
+// VerifySignatureWithSecrets validates an HMAC-SHA256 signature header against multiple candidate secrets.
+// This enables zero-downtime secret rotation during transition grace periods.
+func VerifySignatureWithSecrets(secrets []string, header string, payload []byte, toleranceSeconds int64) bool {
+	if len(secrets) == 0 || header == "" {
+		return false
+	}
+	for _, secret := range secrets {
+		if secret != "" && VerifySignature(secret, header, payload, toleranceSeconds) {
+			return true
+		}
+	}
+	return false
+}

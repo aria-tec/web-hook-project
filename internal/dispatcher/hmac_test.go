@@ -129,3 +129,35 @@ func TestHMAC_KnownVector(t *testing.T) {
 		t.Fatal("expected known vector verification to succeed")
 	}
 }
+
+func TestVerifySignatureWithSecrets(t *testing.T) {
+	secretOld := "whsec_old_1234567890abcdef12345678"
+	secretNew := "whsec_new_abcdef1234567890abcdef12"
+	payload := []byte(`{"event":"user.created","id":"usr_123"}`)
+	now := time.Now().Unix()
+
+	// Signed with old secret
+	headerOld := dispatcher.SignPayload(secretOld, now, payload)
+	if !dispatcher.VerifySignatureWithSecrets([]string{secretNew, secretOld}, headerOld, payload, 300) {
+		t.Errorf("expected signature with old secret to verify against []secrets")
+	}
+
+	// Signed with new secret
+	headerNew := dispatcher.SignPayload(secretNew, now, payload)
+	if !dispatcher.VerifySignatureWithSecrets([]string{secretNew, secretOld}, headerNew, payload, 300) {
+		t.Errorf("expected signature with new secret to verify against []secrets")
+	}
+
+	// Invalid secret
+	if dispatcher.VerifySignatureWithSecrets([]string{"whsec_wrong"}, headerNew, payload, 300) {
+		t.Errorf("expected invalid secret to fail verification")
+	}
+
+	// Empty list / header
+	if dispatcher.VerifySignatureWithSecrets(nil, headerNew, payload, 300) {
+		t.Errorf("expected nil secrets to fail")
+	}
+	if dispatcher.VerifySignatureWithSecrets([]string{secretNew}, "", payload, 300) {
+		t.Errorf("expected empty header to fail")
+	}
+}
