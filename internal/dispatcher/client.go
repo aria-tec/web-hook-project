@@ -18,13 +18,17 @@ import (
 	"web-hook-project/internal/telemetry"
 )
 
+// AttemptCallback defines a listener function for delivery attempt notifications.
+type AttemptCallback func(attempt *domain.DeliveryAttempt)
+
 // Dispatcher executes egress HTTP webhook deliveries with SSRF safety, HMAC-SHA256 signing,
 // response tracking, and DLQ/retry classification.
 type Dispatcher struct {
-	client  *http.Client
-	repo    storage.Repository
-	policy  retry.BackoffPolicy
-	metrics *telemetry.Metrics
+	client    *http.Client
+	repo      storage.Repository
+	policy    retry.BackoffPolicy
+	metrics   *telemetry.Metrics
+	onAttempt AttemptCallback
 }
 
 // NewDispatcher creates a new Dispatcher instance with the given HTTP client, storage repository, and retry policy.
@@ -45,6 +49,12 @@ func NewDispatcher(client *http.Client, repo storage.Repository, policy retry.Ba
 // WithMetrics sets the telemetry metrics collector on the dispatcher.
 func (d *Dispatcher) WithMetrics(m *telemetry.Metrics) *Dispatcher {
 	d.metrics = m
+	return d
+}
+
+// WithAttemptCallback sets a callback listener invoked after each delivery attempt is recorded.
+func (d *Dispatcher) WithAttemptCallback(cb AttemptCallback) *Dispatcher {
+	d.onAttempt = cb
 	return d
 }
 
@@ -151,6 +161,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, endpoint *domain.Endpoint, ev
 			}
 			d.metrics.IncDLQ(endpoint.TenantID, endpoint.ID, reason)
 		}
+	}
+
+	if d.onAttempt != nil {
+		d.onAttempt(attempt)
 	}
 
 	return attempt, nil

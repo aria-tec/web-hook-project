@@ -23,10 +23,11 @@ const (
 
 // Handler provides HTTP handlers for ingestion, endpoints management, and health checks.
 type Handler struct {
-	repo     storage.Repository
-	guard    idempotency.Guard
-	idempTTL time.Duration
-	metrics  *telemetry.Metrics
+	repo      storage.Repository
+	guard     idempotency.Guard
+	idempTTL  time.Duration
+	metrics   *telemetry.Metrics
+	sseBroker *SSEBroker
 }
 
 // NewHandler creates a new API Handler instance.
@@ -42,6 +43,17 @@ func NewHandler(repo storage.Repository, guard idempotency.Guard) *Handler {
 func (h *Handler) WithMetrics(m *telemetry.Metrics) *Handler {
 	h.metrics = m
 	return h
+}
+
+// WithSSEBroker attaches an SSEBroker to the handler for live event streaming.
+func (h *Handler) WithSSEBroker(b *SSEBroker) *Handler {
+	h.sseBroker = b
+	return h
+}
+
+// GetSSEBroker returns the configured SSEBroker instance, if any.
+func (h *Handler) GetSSEBroker() *SSEBroker {
+	return h.sseBroker
 }
 
 // IngestEventRequest represents incoming webhook payload for event ingestion.
@@ -295,3 +307,93 @@ func (h *Handler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().UTC(),
 	})
 }
+
+// ReplayDLQRequest represents the request body for replaying DLQ events.
+type ReplayDLQRequest struct {
+	EventIDs []string `json:"event_ids"`
+}
+
+// HandleListDLQ returns dead-lettered events for a tenant.
+func (h *Handler) HandleListDLQ(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	tenantID := r.Header.Get(HeaderTenantID)
+	if tenantID == "" {
+		writeJSONError(w, http.StatusBadRequest, "X-Tenant-ID header is required")
+		return
+	}
+
+	limit := 50
+	offset := 0
+
+	events, err := h.repo.GetDLQEvents(r.Context(), tenantID, limit, offset)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to retrieve DLQ events")
+		return
+	}
+
+	if events == nil {
+		events = []domain.Event{}
+	}
+
+	writeJSON(w, http.StatusOK, events)
+}
+
+// HandleReplayDLQ replays dead-lettered events back into the transactional outbox pipeline.
+func (h *Handler) HandleReplayDLQ(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	tenantID := r.Header.Get(HeaderTenantID)
+	if tenantID == "" {
+		writeJSONError(w, http.StatusBadRequest, "X-Tenant-ID header is required")
+		return
+	}
+
+	var req ReplayDLQRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request JSON")
+		return
+	}
+
+	if len(req.EventIDs) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "event_ids array cannot be empty")
+		return
+	}
+
+	if len(req.EventIDs) > 100 {
+		writeJSONError(w, http.StatusBadRequest, "event_ids batch size cannot exceed 100")
+		return
+	}
+
+	replayedCount, err := h.repo.ReplayDLQEvents(r.Context(), tenantID, req.EventIDs)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to replay events: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":         "QUEUED_FOR_RETRY",
+		"replayed_count": replayedCount,
+	})
+}
+
+// HandleEventStream handles SSE live stream requests for delivery attempts.
+func (h *Handler) HandleEventStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodOptions {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.sseBroker != nil {
+		h.sseBroker.ServeHTTP(w, r)
+		return
+	}
+	writeJSONError(w, http.StatusServiceUnavailable, "SSE stream broker not configured")
+}
+
+

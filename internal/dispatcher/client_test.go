@@ -352,3 +352,56 @@ func TestDispatcher_NilInputs(t *testing.T) {
 		t.Error("expected error for nil event")
 	}
 }
+
+func TestDispatcher_AttemptCallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	repo := storage.NewMemoryRepository()
+	ctx := context.Background()
+
+	event := &domain.Event{
+		ID:        "evt_cb_001",
+		TenantID:  "tenant_cb",
+		EventType: "callback.test",
+		Payload:   []byte(`{}`),
+		Status:    domain.EventStatusPending,
+		CreatedAt: time.Now(),
+	}
+	outbox := &domain.OutboxEvent{
+		EventID:   event.ID,
+		Status:    domain.OutboxStatusPending,
+		CreatedAt: time.Now(),
+	}
+	_ = repo.CreateEventWithOutbox(ctx, event, outbox)
+
+	endpoint := &domain.Endpoint{
+		ID:        "ep_cb_001",
+		TenantID:  "tenant_cb",
+		URL:       server.URL,
+		Secret:    "whsec_cb",
+		IsActive:  true,
+	}
+
+	var calledAttempt *domain.DeliveryAttempt
+	d := dispatcher.NewDispatcher(server.Client(), repo, retry.DefaultBackoffPolicy()).
+		WithAttemptCallback(func(att *domain.DeliveryAttempt) {
+			calledAttempt = att
+		})
+
+	attempt, err := d.Dispatch(ctx, endpoint, event, 1)
+	if err != nil {
+		t.Fatalf("dispatch error: %v", err)
+	}
+
+	if calledAttempt == nil {
+		t.Fatal("expected attempt callback to be invoked")
+	}
+	if calledAttempt.ID != attempt.ID {
+		t.Errorf("expected callback attempt ID %q, got %q", attempt.ID, calledAttempt.ID)
+	}
+}
+

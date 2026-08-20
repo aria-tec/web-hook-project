@@ -106,10 +106,13 @@ func main() {
 		guard = idempotency.NewMemoryGuard()
 	}
 
-	// 4. Safe HTTP Dispatcher
+	// 4. Real-time SSE Stream Broker & Safe HTTP Dispatcher
+	sseBroker := api.NewSSEBroker()
 	safeClient := dispatcher.NewSafeHTTPClient(10 * time.Second)
 	backoffPolicy := retry.DefaultBackoffPolicy()
-	disp := dispatcher.NewDispatcher(safeClient, repo, backoffPolicy).WithMetrics(metrics)
+	disp := dispatcher.NewDispatcher(safeClient, repo, backoffPolicy).
+		WithMetrics(metrics).
+		WithAttemptCallback(sseBroker.Broadcast)
 
 	// 5. Bounded Worker Pool
 	workerCfg := worker.Config{
@@ -125,7 +128,9 @@ func main() {
 	relay := outbox.NewRelay(repo, streamQueue)
 
 	// 7. HTTP API Router & Handlers
-	apiHandler := api.NewHandler(repo, guard).WithMetrics(metrics)
+	apiHandler := api.NewHandler(repo, guard).
+		WithMetrics(metrics).
+		WithSSEBroker(sseBroker)
 	router := api.NewRouter(apiHandler, metrics)
 
 	server := &http.Server{
