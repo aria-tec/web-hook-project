@@ -1,0 +1,12 @@
+.git
+.gitignore
+.dockerignore
+node_modules
+web/node_modules
+web/dist
+sdk/typescript/node_modules
+sdk/typescript/dist
+.superpowers
+.gitnexus
+tests/load
+*.log
