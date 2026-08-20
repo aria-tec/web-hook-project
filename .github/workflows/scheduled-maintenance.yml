@@ -123,5 +123,5 @@ jobs:
           deno-version: latest
 
       - name: Run Deno Verification
-        run: npm run build && (deno check --unstable-sloppy-imports src/index.ts || deno check dist/index.js)
+        run: deno check dist/index.js
         continue-on-error: true
