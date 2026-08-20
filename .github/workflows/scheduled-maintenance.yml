@@ -68,12 +68,12 @@ jobs:
   # ADVISORY TIER: Upstream Evolution & Multi-Runtime (Non-Blocking)
   # =========================================================================
   advisory-upstream:
-    name: Upstream Go Tip & Multi-Runtime SDK Compatibility
+    name: Upstream Go Latest & Compatibility Matrix (${{ matrix.go-version }})
     runs-on: ubuntu-latest
     continue-on-error: true
     strategy:
       matrix:
-        go-version: ['tip']
+        go-version: ['stable', '1.25.x']
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -82,8 +82,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
+          check-latest: true
 
-      - name: Run Core Test Suite on Go Tip
+      - name: Run Core Test Suite on Go Upstream
         run: go test -v ./...
 
   advisory-sdk-runtimes:
