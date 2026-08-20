@@ -1,0 +1,125 @@
+name: Scheduled Stability & Vulnerability Audit
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  # =========================================================================
+  # STRICT TIER: Must 100% PASS (Blocking Gate)
+  # =========================================================================
+  strict-audit:
+    name: Strict Hardening & Security Audit
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: webhook_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go Stable
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install Vulnerability Scanner (govulncheck)
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run Vulnerability Scan (Zero CVE Gate)
+        run: govulncheck ./...
+
+      - name: Run Unit & Race Detector Test Suite
+        run: go test -v -race ./...
+
+      - name: Run Time-Bounded Active Fuzzing Suite (HMAC & SSRF)
+        run: |
+          go test -v -fuzz=FuzzVerifySignature -fuzztime=2m ./tests/
+          go test -v -fuzz=FuzzIsRestrictedIP -fuzztime=2m ./tests/
+
+      - name: Run Adversarial & Leak Invariant Assertions
+        run: go test -v -race ./tests/ -run "TestAdversarial|TestGoroutineLeak|TestHeapMemory"
+
+  # =========================================================================
+  # ADVISORY TIER: Upstream Evolution & Multi-Runtime (Non-Blocking)
+  # =========================================================================
+  advisory-upstream:
+    name: Upstream Go Tip & Multi-Runtime SDK Compatibility
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      matrix:
+        go-version: ['tip']
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go Upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Run Core Test Suite on Go Tip
+        run: go test -v ./...
+
+  advisory-sdk-runtimes:
+    name: TypeScript SDK Multi-Runtime Matrix
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Node Tests
+        run: npm ci && npm test
+        continue-on-error: true
+
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Run Bun Tests
+        run: bun test
+        continue-on-error: true
+
+      - name: Setup Deno Runtime
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run Deno Verification
+        run: deno check src/index.ts
+        continue-on-error: true

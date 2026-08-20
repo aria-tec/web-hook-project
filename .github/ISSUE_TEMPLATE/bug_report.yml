@@ -1,0 +1,46 @@
+name: Bug Report (Deterministic Reproducer Required)
+description: Report an issue or unexpected behavior in Mini-Svix.
+title: "[BUG]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🏛️ Stability Charter & Bug Reporting Policy
+        Mini-Svix is feature-complete and architecturally frozen (*The SQLite Standard*).
+        To prevent regressions and ensure rapid resolution, **every bug report must include a deterministic reproducer**.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the observed vs expected behavior...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Deterministic Go Test or Docker Reproducer Script
+      description: Paste a minimal `go test` snippet or `docker-compose` command that reproduces this failure 100% deterministically.
+      render: go
+      placeholder: |
+        func TestReproduceBug(t *testing.T) {
+            // Minimal failing test code here
+        }
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment & Runtime Details
+      description: Go version, OS, PostgreSQL version, Redis version.
+      placeholder: |
+        - Go Version: 1.24
+        - OS: Linux / macOS
+        - PostgreSQL: 16
+        - Redis: 7.2
+    validations:
+      required: true
