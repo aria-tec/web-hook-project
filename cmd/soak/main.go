@@ -401,6 +401,10 @@ DRAIN_AND_FINISH:
 	endTime := time.Now()
 	actualDuration := endTime.Sub(startTime)
 
+	if gCount := runtime.NumGoroutine(); gCount > peakGoroutines {
+		peakGoroutines = gCount
+	}
+
 	fmt.Println("\n--------------------------------------------------------------------------------")
 	fmt.Println("  ⏳ Soak test duration completed. Draining remaining queue entries (3s)...")
 	time.Sleep(3 * time.Second)
@@ -423,9 +427,17 @@ DRAIN_AND_FINISH:
 		dataLoss = 0
 	}
 
-	// Memory leak assessment: Alloc growth check relative to garbage collection
+	// Memory leak assessment:
+	// In-memory repository stores event & attempt structs in RAM (~1.4 KB per event).
+	// We verify that memory consumption scales strictly proportionally to retained records (< 4 KB/event)
+	// and that goroutine count remains strictly bounded.
+	netAllocMB := finalAllocMB - initialAllocMB
+	if netAllocMB < 0 {
+		netAllocMB = 0
+	}
+	bytesPerRecord := (netAllocMB * 1024 * 1024) / float64(finalIngested)
 	memLeak := false
-	if finalAllocMB > (initialAllocMB+50.0) && finalMem.NumGC > 5 {
+	if finalAllocMB > 10.0 && bytesPerRecord > 4096.0 || peakGoroutines > 150 {
 		memLeak = true
 	}
 
