@@ -44,7 +44,7 @@ jobs:
       - name: Setup Go Stable
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.13'
+          go-version: 'stable'
           check-latest: true
           cache: true
 
@@ -74,7 +74,7 @@ jobs:
     continue-on-error: true
     strategy:
       matrix:
-        go-version: ['stable', '1.25.x']
+        go-version: ['stable', 'oldstable']
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -120,7 +120,7 @@ jobs:
       - name: Setup Deno Runtime
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: latest
 
       - name: Run Deno Verification
         run: deno check src/index.ts
