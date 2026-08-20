@@ -1,0 +1,46 @@
+{
+  "name": "@minisvix/client",
+  "version": "1.0.0",
+  "description": "Zero-dependency TypeScript client and Web Crypto HMAC verifier for Mini-Svix",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test test/signature.test.ts test/client.test.ts"
+  },
+  "keywords": [
+    "webhook",
+    "webhooks",
+    "minisvix",
+    "svix",
+    "hmac",
+    "zero-dependency",
+    "web-crypto",
+    "typescript"
+  ],
+  "author": "Mini-Svix Team",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

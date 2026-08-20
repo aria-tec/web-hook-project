@@ -34,3 +34,10 @@ Thumbs.db
 .env
 .env.local
 *.secret
+
+# Node / JS artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
