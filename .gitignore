@@ -41,8 +41,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Soak & load test outputs
-soak-test-*.json*
-soak-test-*.jsonl
-soak-test-*.log
+# Temporary test logs
+*.log
 

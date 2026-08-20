@@ -1,0 +1,20 @@
+{
+  "engine_version": "Mini-Svix v1.0.0-turnkey",
+  "start_time": "2026-08-20T10:20:49.18652Z",
+  "end_time": "2026-08-20T10:20:54.186662Z",
+  "target_duration": "5s",
+  "actual_duration_secs": 4.999991542,
+  "total_ingested": 249,
+  "total_delivered": 246,
+  "total_dlq": 3,
+  "total_retried": 3,
+  "total_pel_reclaimed": 0,
+  "total_sse_broadcasts": 504,
+  "peak_goroutines": 29,
+  "initial_alloc_mb": 0.3861236572265625,
+  "final_alloc_mb": 2.940093994140625,
+  "memory_leak_detected": false,
+  "data_loss_count": 0,
+  "status": "PASSED (100% STABLE \u0026 ZERO LOSS VERIFIED)",
+  "snapshots_count": 0
+}
