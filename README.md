@@ -339,8 +339,14 @@ The codebase is audited autonomously every Sunday at 00:00 UTC via [`.github/wor
 * **Strict Tier (Blocking Gate):** Go 1.24 stable, PostgreSQL 16/17, Redis 7/8, `govulncheck` (0 CVEs), race detector, active fuzzers, and `goleak` memory assertions.
 * **Advisory Tier (Experimental):** Go `tip`, Bun, and Deno runtimes (`continue-on-error: true`).
 
-### 🐛 Bug Reporting & Deterministic Reproducer Policy
-To maintain high reliability, every bug report submitted must include a **deterministic reproducer** (a minimal standalone `go test` or `docker-compose` snippet). See [`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml).
+### 🐛 Cara Menangani Bug / Laporan dari Luar
+Jika ada pengguna atau Anda sendiri menemukan *edge case* atau bug:
+1. **Wajibkan Skrip Reproduksi Deterministik:**  
+   Buat satu fungsi test yang mereproduksi kegagalan tersebut (mengikuti format [`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml)).
+2. **Perbaiki Kodenya:**  
+   Tambal logika pada layer internal terkait (`internal/dispatcher`, `internal/worker`, atau `internal/queue`).
+3. **Kunci Selamanya (*Zero Regression Guarantee*):**  
+   Test reproduksi tersebut jangan dihapus, melainkan disimpan permanen di dalam `tests/`. Dengan demikian, bug yang sama tidak akan pernah bisa muncul kembali di masa depan.
 
 ---
 
