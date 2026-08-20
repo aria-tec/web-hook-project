@@ -320,3 +320,27 @@ func (p *WorkerPool) Stop() {
 	p.wg.Wait()
 }
 
+// Shutdown signals all workers to stop and waits for all in-flight jobs to complete or until ctx expires.
+func (p *WorkerPool) Shutdown(ctx context.Context) error {
+	if !p.stopped.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	if p.cancel != nil {
+		p.cancel()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("worker pool shutdown timed out: %w", ctx.Err())
+	}
+}
+

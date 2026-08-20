@@ -39,12 +39,22 @@ type StreamQueue interface {
 
 // RedisStreamQueue is a Redis Streams backed implementation of StreamQueue.
 type RedisStreamQueue struct {
-	client *redis.Client
+	client       *redis.Client
+	maxLenApprox int64
 }
 
 // NewRedisStreamQueue creates a new RedisStreamQueue instance.
 func NewRedisStreamQueue(client *redis.Client) *RedisStreamQueue {
-	return &RedisStreamQueue{client: client}
+	return &RedisStreamQueue{
+		client:       client,
+		maxLenApprox: 500000,
+	}
+}
+
+// WithMaxLenApprox sets the approximate stream trimming length for Redis memory safety.
+func (r *RedisStreamQueue) WithMaxLenApprox(maxLen int64) *RedisStreamQueue {
+	r.maxLenApprox = maxLen
+	return r
 }
 
 func (r *RedisStreamQueue) PublishEvent(ctx context.Context, streamName string, event *domain.Event) (string, error) {
@@ -68,10 +78,16 @@ func (r *RedisStreamQueue) PublishEvent(ctx context.Context, streamName string, 
 		"created_at": createdAt.UTC().Format(time.RFC3339Nano),
 	}
 
-	msgID, err := r.client.XAdd(ctx, &redis.XAddArgs{
+	xAddArgs := &redis.XAddArgs{
 		Stream: streamName,
 		Values: values,
-	}).Result()
+	}
+	if r.maxLenApprox > 0 {
+		xAddArgs.MaxLen = r.maxLenApprox
+		xAddArgs.Approx = true
+	}
+
+	msgID, err := r.client.XAdd(ctx, xAddArgs).Result()
 	if err != nil {
 		return "", fmt.Errorf("redis xadd error: %w", err)
 	}

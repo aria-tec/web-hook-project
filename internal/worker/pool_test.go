@@ -433,3 +433,33 @@ func TestWorkerPool_ZombieWorkerFencing(t *testing.T) {
 	}
 }
 
+func TestWorkerPool_ShutdownGraceful(t *testing.T) {
+	repo := storage.NewMemoryRepository()
+	q := queue.NewMemoryStreamQueue()
+	ctx := context.Background()
+
+	disp := dispatcher.NewDispatcher(nil, repo, retry.DefaultBackoffPolicy())
+	pool := worker.NewWorkerPool(worker.Config{
+		NumWorkers:   2,
+		StreamName:   "stream:shutdown_test",
+		GroupName:    "shutdown-group",
+		PollInterval: 10 * time.Millisecond,
+	}, q, repo, disp)
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("failed to start worker pool: %v", err)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+
+	if err := pool.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("expected clean graceful shutdown, got error: %v", err)
+	}
+
+	// Calling Shutdown again should be idempotent and return nil
+	if err := pool.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("expected idempotent second shutdown to return nil, got: %v", err)
+	}
+}
+
