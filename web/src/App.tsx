@@ -150,6 +150,7 @@ export function App() {
             onToggleSelect={dlq.toggleSelect}
             onSelectAll={dlq.selectAll}
             onClearSelection={dlq.clearSelection}
+            onReplaySingle={dlq.replaySingle}
             onReplaySelected={dlq.replaySelected}
             onReplayAll={dlq.replayAll}
             tenantId={tenantId}

@@ -26,6 +26,7 @@ interface DLQManagerProps {
   onToggleSelect: (id: string) => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
+  onReplaySingle?: (id: string) => Promise<ReplayResponse | null>;
   onReplaySelected: () => Promise<ReplayResponse | null>;
   onReplayAll: () => Promise<ReplayResponse | null>;
   tenantId: string;
@@ -42,6 +43,7 @@ export const DLQManager: React.FC<DLQManagerProps> = ({
   onToggleSelect,
   onSelectAll,
   onClearSelection,
+  onReplaySingle,
   onReplaySelected,
   onReplayAll,
   tenantId,
@@ -235,7 +237,13 @@ export const DLQManager: React.FC<DLQManagerProps> = ({
                           <span>Payload</span>
                         </button>
                         <button
-                          onClick={() => onReplaySelected()}
+                          onClick={() => {
+                            if (onReplaySingle) {
+                              onReplaySingle(event.id);
+                            } else {
+                              onReplaySelected();
+                            }
+                          }}
                           className="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 text-xs font-sans font-medium transition-colors"
                           title="Replay this event"
                         >

@@ -109,6 +109,13 @@ export function useDLQ(options: UseDLQOptions) {
     }
   }, [baseUrl, fetchDLQ, tenantId]);
 
+  const replaySingle = useCallback(async (id: string) => {
+    if (id) {
+      return await replayEvents([id]);
+    }
+    return null;
+  }, [replayEvents]);
+
   const replaySelected = useCallback(async () => {
     const ids = Array.from(selectedIds);
     if (ids.length > 0) {
@@ -143,6 +150,7 @@ export function useDLQ(options: UseDLQOptions) {
     selectAll,
     clearSelection,
     replayEvents,
+    replaySingle,
     replaySelected,
     replayAll,
   };
