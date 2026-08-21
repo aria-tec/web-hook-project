@@ -1,6 +1,10 @@
 name: Scheduled Stability & Vulnerability Audit
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     # Run every Sunday at 00:00 UTC
     - cron: '0 0 * * 0'
